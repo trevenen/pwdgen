@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	mathrand "math/rand" // Alias for clarity
+	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -25,13 +29,40 @@ type PasswordPolicy struct {
 }
 
 type Generator struct {
-	policy PasswordPolicy
+	policy          PasswordPolicy
+	commonPasswords map[string]struct{}
+	dictionary      []string
 }
 
 func NewGenerator(policy PasswordPolicy) *Generator {
-	return &Generator{
-		policy: policy,
+	gen := &Generator{
+		policy:          policy,
+		commonPasswords: make(map[string]struct{}),
 	}
+
+	// Load common passwords
+	file, err := os.Open("10k-most-common.txt")
+	if err != nil {
+		panic(err)
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		gen.commonPasswords[scanner.Text()] = struct{}{}
+	}
+	file.Close()
+
+	// Load dictionary words
+	file, err = os.Open("words_alpha.txt")
+	if err != nil {
+		panic(err)
+	}
+	scanner = bufio.NewScanner(file)
+	for scanner.Scan() {
+		gen.dictionary = append(gen.dictionary, scanner.Text())
+	}
+	file.Close()
+
+	return gen
 }
 
 func (g *Generator) Generate() string {
@@ -61,19 +92,40 @@ func (g *Generator) Generate() string {
 		password = password[1:] + string(password[0])
 	}
 
+	// Re-checking against common passwords and dictionary words after shuffling
+	for {
+		// Check against common passwords
+		if _, exists := g.commonPasswords[password]; exists {
+			password = shuffleAndJoin(passwordParts)
+			continue
+		}
+
+		// Check against dictionary words
+		isValid := true
+		for _, word := range g.dictionary {
+			if strings.Contains(password, word) {
+				isValid = false
+				password = shuffleAndJoin(passwordParts)
+				break
+			}
+		}
+
+		if isValid {
+			break
+		}
+	}
+
 	return password
 }
 
 func shuffleAndJoin(parts []string) string {
 	password := strings.Join(parts, "")
 	runePass := []rune(password)
-	for i := len(runePass) - 1; i > 0; i-- {
-		j := randomInt(i + 1)
+	mathrand.Shuffle(len(runePass), func(i, j int) {
 		runePass[i], runePass[j] = runePass[j], runePass[i]
-	}
+	})
 	return string(runePass)
 }
-
 func isAlpha(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
@@ -95,6 +147,9 @@ func randomInt(n int) int {
 }
 
 func main() {
+	// Seed the math/rand package's default source
+	mathrand.Seed(time.Now().UnixNano())
+
 	policy := PasswordPolicy{
 		MinLength:          40,
 		MinUppercase:       10,
