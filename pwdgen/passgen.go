@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"crypto/rand"
 	"fmt"
-	"log"
 	"math/big"
-	"os"
 	"strings"
 )
 
@@ -16,26 +13,6 @@ const (
 	Digits       = "0123456789"
 	Symbols      = "~!@#$%^&*()_+`-={}|[]\\:\"<>?,./"
 )
-
-var (
-	commonPasswords = make(map[string]bool)
-	commonWords     = []string{"apple", "banana", "cherry", "date", "elderberry"} // Simplified list. You can expand this.
-)
-
-func loadCommonPasswords(filename string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		commonPasswords[scanner.Text()] = true
-	}
-
-	return scanner.Err()
-}
 
 type PasswordPolicy struct {
 	MinLength          int
@@ -58,10 +35,6 @@ func NewGenerator(policy PasswordPolicy) *Generator {
 }
 
 func (g *Generator) Generate() string {
-	if g.policy.GeneratePassphrase {
-		return g.generatePassphrase()
-	}
-
 	letters := LowerLetters + UpperLetters
 	digits := Digits
 	symbols := Symbols
@@ -73,38 +46,36 @@ func (g *Generator) Generate() string {
 		letters = strings.ReplaceAll(letters, "1", "")
 	}
 
-	length := g.policy.MinLength
-	for {
-		result := ""
-		result += randomString(letters, g.policy.MinUppercase+g.policy.MinLowercase)
-		result += randomString(digits, g.policy.MinDigit)
-		result += randomString(symbols, g.policy.MinSpecialChar)
+	passwordParts := make([]string, 0)
+	passwordParts = append(passwordParts, randomString(UpperLetters, g.policy.MinUppercase))
+	passwordParts = append(passwordParts, randomString(LowerLetters, g.policy.MinLowercase))
+	passwordParts = append(passwordParts, randomString(digits, g.policy.MinDigit))
+	passwordParts = append(passwordParts, randomString(symbols, g.policy.MinSpecialChar))
 
-		remaining := length - len(result)
-		result += randomString(letters+digits+symbols, remaining)
+	remaining := g.policy.MinLength - (g.policy.MinUppercase + g.policy.MinLowercase + g.policy.MinDigit + g.policy.MinSpecialChar)
+	passwordParts = append(passwordParts, randomString(letters+digits+symbols, remaining))
 
-		if !containsCommonPassword(result) {
-			return result
-		}
+	password := shuffleAndJoin(passwordParts)
+
+	for len(password) > 0 && !isAlpha(rune(password[0])) {
+		password = password[1:] + string(password[0])
 	}
+
+	return password
 }
 
-func (g *Generator) generatePassphrase() string {
-	words := []string{}
-	for i := 0; i < g.policy.MinLength; i++ {
-		word := commonWords[randomInt(len(commonWords))]
-		words = append(words, word)
+func shuffleAndJoin(parts []string) string {
+	password := strings.Join(parts, "")
+	runePass := []rune(password)
+	for i := len(runePass) - 1; i > 0; i-- {
+		j := randomInt(i + 1)
+		runePass[i], runePass[j] = runePass[j], runePass[i]
 	}
-	return strings.Join(words, "-")
+	return string(runePass)
 }
 
-func containsCommonPassword(password string) bool {
-	for common := range commonPasswords {
-		if strings.Contains(password, common) {
-			return true
-		}
-	}
-	return false
+func isAlpha(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
 
 func randomString(charset string, length int) string {
@@ -124,10 +95,6 @@ func randomInt(n int) int {
 }
 
 func main() {
-	if err := loadCommonPasswords("10k-most-common.txt"); err != nil {
-		log.Fatalf("Failed to load common passwords: %v", err)
-	}
-
 	policy := PasswordPolicy{
 		MinLength:          40,
 		MinUppercase:       10,
