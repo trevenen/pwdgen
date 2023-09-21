@@ -1,89 +1,118 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
-	"math"
-	"regexp"
+	"os"
 	"strings"
 )
 
-// PasswordPolicy defines the criteria for password strength
+const (
+	LowerLetters = "abcdefghijklmnopqrstuvwxyz"
+	UpperLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	Digits       = "0123456789"
+	Symbols      = "~!@#$%^&*()_+`-={}|[]\\:\"<>?,./"
+)
+
+var commonPasswords = make(map[string]bool)
+
+func loadCommonPasswords(filename string) error {
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		commonPasswords[scanner.Text()] = true
+	}
+
+	return scanner.Err()
+}
+
 type PasswordPolicy struct {
-	MinLength           int
-	MinUppercase        int
-	MinLowercase        int
-	MinDigit            int
-	MinSpecialChar      int
-	MinEntropy          float64
+	MinLength          int
+	MinUppercase       int
+	MinLowercase       int
+	MinDigit           int
+	MinSpecialChar     int
+	ExcludeSimilar     bool
+	GeneratePassphrase bool
 }
 
-// calculateEntropy calculates the entropy of a given password
-func calculateEntropy(password string) float64 {
-	var charsetSize int
-	if regexp.MustCompile(`[a-z]`).MatchString(password) {
-		charsetSize += 26
-	}
-	if regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		charsetSize += 26
-	}
-	if regexp.MustCompile(`\d`).MatchString(password) {
-		charsetSize += 10
-	}
-	if regexp.MustCompile(`[!@#\$%\^&\*\(\)_\+\-=\[\]{};':"\\|,.<>\/?]+`).MatchString(password) {
-		charsetSize += 32 // Approximation of the number of special characters generally available on keyboards
-	}
-
-	entropy := float64(len(password)) * math.Log2(float64(charsetSize))
-
-	return entropy
+type Auditor struct {
+	policy PasswordPolicy
 }
 
-// CheckPasswordStrength accepts a password string and a PasswordPolicy struct to check it against a set of criteria to determine its strength
-func CheckPasswordStrength(password string, policy PasswordPolicy) map[string]bool {
-	entropy := calculateEntropy(password)
+func NewAuditor(policy PasswordPolicy) *Auditor {
+	return &Auditor{policy: policy}
+}
 
-	criteria := map[string]interface{}{
-		fmt.Sprintf("Minimum %d characters", policy.MinLength):             regexp.MustCompile(fmt.Sprintf(`.{%d,}`, policy.MinLength)),
-		fmt.Sprintf("At least %d uppercase", policy.MinUppercase):         regexp.MustCompile(fmt.Sprintf(`(?=(?:[^A-Z]*[A-Z]){%d})`, policy.MinUppercase)),
-		fmt.Sprintf("At least %d lowercase", policy.MinLowercase):         regexp.MustCompile(fmt.Sprintf(`(?=(?:[^a-z]*[a-z]){%d})`, policy.MinLowercase)),
-		fmt.Sprintf("At least %d digit", policy.MinDigit):                 regexp.MustCompile(fmt.Sprintf(`(?=(?:[^\d]*\d){%d})`, policy.MinDigit)),
-		fmt.Sprintf("At least %d special character", policy.MinSpecialChar): regexp.MustCompile(fmt.Sprintf(`(?=(?:[^!@#\$%\^&\*\(\)_\+\-=\[\]{};':"\\|,.<>\/?]*[!@#\$%\^&\*\(\)_\+\-=\[\]{};':"\\|,.<>\/?+]){%d})`, policy.MinSpecialChar)),
-		fmt.Sprintf("Minimum entropy of %.2f bits", policy.MinEntropy):     entropy >= policy.MinEntropy,
+func (a *Auditor) AuditPassword(password string) {
+	if len(password) < a.policy.MinLength {
+		fmt.Printf("Password is too short. It should be at least %d characters long.\n", a.policy.MinLength)
 	}
 
-	results := make(map[string]bool)
-	for description, criterion := range criteria {
-		switch criterion.(type) {
-		case *regexp.Regexp:
-			results[description] = criterion.(*regexp.Regexp).MatchString(password)
-		case bool:
-			results[description] = criterion.(bool)
+	if countChars(password, UpperLetters) < a.policy.MinUppercase {
+		fmt.Printf("Password should contain at least %d uppercase letters.\n", a.policy.MinUppercase)
+	}
+
+	if countChars(password, LowerLetters) < a.policy.MinLowercase {
+		fmt.Printf("Password should contain at least %d lowercase letters.\n", a.policy.MinLowercase)
+	}
+
+	if countChars(password, Digits) < a.policy.MinDigit {
+		fmt.Printf("Password should contain at least %d digits.\n", a.policy.MinDigit)
+	}
+
+	if countChars(password, Symbols) < a.policy.MinSpecialChar {
+		fmt.Printf("Password should contain at least %d symbols.\n", a.policy.MinSpecialChar)
+	}
+
+	if containsCommonPassword(password) {
+		fmt.Println("Password matches a commonly used password. Consider using a more unique password.")
+	}
+
+	// TODO: Add check for dictionary words and other policies here if required.
+}
+
+func countChars(s, chars string) int {
+	count := 0
+	for _, char := range s {
+		if strings.ContainsRune(chars, char) {
+			count++
 		}
 	}
+	return count
+}
 
-	return results
+func containsCommonPassword(password string) bool {
+	return commonPasswords[password]
 }
 
 func main() {
-	var password string
-	fmt.Print("Please enter a password to audit: ")
-	fmt.Scanln(&password)
-
-	policy := PasswordPolicy{
-		MinLength:      16,
-		MinUppercase:   1,
-		MinLowercase:   1,
-		MinDigit:       1,
-		MinSpecialChar: 1,
-		MinEntropy:     60.0,
+	if err := loadCommonPasswords("10k-most-common.txt"); err != nil {
+		fmt.Printf("Failed to load common passwords: %v\n", err)
+		return
 	}
 
-	results := CheckPasswordStrength(password, policy)
-	for description, pass := range results {
-		if pass {
-			fmt.Printf("Pass: %s\n", description)
-		} else {
-			fmt.Printf("Fail: %s\n", description)
-		}
+	policy := PasswordPolicy{
+		MinLength:          40,
+		MinUppercase:       10,
+		MinLowercase:       10,
+		MinDigit:           10,
+		MinSpecialChar:     10,
+		ExcludeSimilar:     true,
+		GeneratePassphrase: false,
+	}
+
+	auditor := NewAuditor(policy)
+
+	fmt.Println("Enter the password to audit:")
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		password := scanner.Text()
+		auditor.AuditPassword(password)
 	}
 }
